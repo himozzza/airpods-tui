@@ -51,9 +51,22 @@ pub enum Action {
 pub struct HandoffFsm {
     state: Ownership,
     generation: u64,
+    /// Config `hold_audio_ownership`: claim the session on connect and
+    /// re-claim it whenever a peer goes silent, even if Linux had no audio
+    /// at steal time. The Digital Crown / stem swipe volume is routed to
+    /// the session owner, so without this the crown steers a connected
+    /// iPhone instead of Linux whenever the iPhone last grabbed audio.
+    always_reclaim: bool,
 }
 
 impl HandoffFsm {
+    pub fn with_always_reclaim(always_reclaim: bool) -> Self {
+        Self {
+            always_reclaim,
+            ..Default::default()
+        }
+    }
+
     pub fn state(&self) -> Ownership {
         self.state
     }
@@ -96,8 +109,11 @@ impl HandoffFsm {
             self.state = Ownership::Linux;
             return Vec::new();
         }
-        // A peer took the session. Stay armed if we already were.
-        let armed = linux_has_audio || self.reclaim_armed();
+        // A peer took the session. Stay armed if we already were; with
+        // always_reclaim, arm even when Linux had no audio so the session
+        // (and the crown volume routing with it) returns once the peer
+        // goes silent.
+        let armed = self.always_reclaim || linux_has_audio || self.reclaim_armed();
         self.state = Ownership::Peer {
             reclaim_when_silent: armed,
         };
@@ -138,11 +154,23 @@ impl HandoffFsm {
         vec![Action::ClaimOwnership, Action::RestartAudioStream]
     }
 
+    /// A fresh AACP session just came up. With `always_reclaim` off this is
+    /// a no-op: ownership is (re-)claimed lazily on local play. With it on,
+    /// claim immediately so crown/swipe volume targets Linux even before
+    /// any playback starts.
+    pub fn on_connected(&mut self) -> Vec<Action> {
+        if !self.always_reclaim || self.state == Ownership::Linux {
+            return Vec::new();
+        }
+        self.state = Ownership::Linux;
+        vec![Action::ClaimOwnership]
+    }
+
     /// Smart-routing SetOwnershipToFalse request: the device asks us to
     /// hand the session over.
     pub fn on_ownership_to_false(&mut self) -> Vec<Action> {
         self.state = Ownership::Peer {
-            reclaim_when_silent: false,
+            reclaim_when_silent: self.always_reclaim,
         };
         vec![
             Action::ReleaseOwnership,
@@ -337,6 +365,59 @@ mod tests {
             Ownership::Peer {
                 reclaim_when_silent: false
             }
+        );
+    }
+
+    #[test]
+    fn always_reclaim_peer_steal_without_local_audio_still_arms() {
+        let mut fsm = HandoffFsm::with_always_reclaim(true);
+        // Steal while Linux is silent: reclaim must still be armed...
+        assert_eq!(peer_steal(&mut fsm, false), vec![Action::PauseTracked]);
+        // ...so the peer going silent schedules a reclaim.
+        assert_eq!(
+            source_none(&mut fsm),
+            vec![Action::ScheduleReclaim { generation: 1 }]
+        );
+    }
+
+    #[test]
+    fn default_policy_peer_steal_without_local_audio_does_not_arm() {
+        let mut fsm = HandoffFsm::default();
+        assert_eq!(peer_steal(&mut fsm, false), vec![Action::PauseTracked]);
+        assert!(source_none(&mut fsm).is_empty());
+    }
+
+    #[test]
+    fn connect_claims_ownership_when_always_reclaim_on() {
+        let mut fsm = HandoffFsm::with_always_reclaim(true);
+        assert_eq!(fsm.on_connected(), vec![Action::ClaimOwnership]);
+        // Idempotent: a repeated connect must not re-send the claim.
+        assert!(fsm.on_connected().is_empty());
+        assert_eq!(fsm.state(), Ownership::Linux);
+    }
+
+    #[test]
+    fn connect_stays_passive_by_default() {
+        let mut fsm = HandoffFsm::default();
+        assert!(fsm.on_connected().is_empty());
+        assert_eq!(fsm.state(), Ownership::Unknown);
+    }
+
+    #[test]
+    fn ownership_to_false_reclaims_when_always_reclaim_on() {
+        let mut fsm = HandoffFsm::with_always_reclaim(true);
+        fsm.on_local_play();
+        assert_eq!(
+            fsm.on_ownership_to_false(),
+            vec![
+                Action::ReleaseOwnership,
+                Action::PauseUntracked,
+                Action::DeactivateA2dp,
+            ]
+        );
+        assert_eq!(
+            source_none(&mut fsm),
+            vec![Action::ScheduleReclaim { generation: 1 }]
         );
     }
 }

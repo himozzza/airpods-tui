@@ -735,7 +735,7 @@ impl MediaControllerState {
             conv_original_volume: None,
             conv_conversation_started: false,
             playback_listener_running: false,
-            handoff: HandoffFsm::default(),
+            handoff: HandoffFsm::with_always_reclaim(config.hold_audio_ownership),
             config,
             audio_tx,
             session_conn: None,
@@ -902,6 +902,17 @@ impl MediaController {
                 }
             }
         })
+    }
+
+    /// A fresh AACP session just came up. The FSM decides whether to claim
+    /// audio ownership immediately (config `hold_audio_ownership`) so the
+    /// Digital Crown / stem swipe volume routes to Linux, or stay passive.
+    pub async fn handle_connected(&self, aacp: &AACPManager) {
+        let actions = self.state.lock().await.handoff.on_connected();
+        if !actions.is_empty() {
+            info!("Claiming AirPods audio ownership on connect (hold_audio_ownership)");
+        }
+        self.run_actions(actions, aacp).await;
     }
 
     /// OwnsConnection report from the device (01 = we own the session).

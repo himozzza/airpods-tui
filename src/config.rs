@@ -18,6 +18,13 @@ pub struct Config {
     /// component label and level, e.g. "Left battery: 18%".
     /// Set to `[]` to disable notifications.
     pub battery_alert_command: Vec<String>,
+    /// Claim AirPods audio ownership on connect and re-claim it whenever a
+    /// peer Apple device goes silent, even if nothing was playing locally.
+    /// Ownership decides where the AirPods Max Digital Crown (and stem
+    /// volume swipe) volume commands go: with this off and an iPhone
+    /// connected at the same time, the crown steers the iPhone's volume.
+    /// Off by default because it may pull audio focus away from the peer.
+    pub hold_audio_ownership: bool,
 }
 
 impl Default for Config {
@@ -36,6 +43,7 @@ impl Default for Config {
             ],
             restart_audio_server: None,
             battery_alert_command: vec!["notify-send".into(), "AirPods".into(), "{}".into()],
+            hold_audio_ownership: false,
         }
     }
 }
@@ -105,6 +113,13 @@ mod tests {
         assert!(!cfg.volume_set_command.is_empty());
         assert!(!cfg.battery_alert_command.is_empty());
         assert!(cfg.restart_audio_server.is_none());
+        assert!(!cfg.hold_audio_ownership);
+    }
+
+    #[test]
+    fn config_can_enable_hold_audio_ownership() {
+        let cfg: Config = toml::from_str("hold_audio_ownership = true").unwrap();
+        assert!(cfg.hold_audio_ownership);
     }
 
     #[test]
