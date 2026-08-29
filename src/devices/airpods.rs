@@ -244,6 +244,15 @@ impl AirPodsDevice {
             .await;
         drop(mc_listener);
 
+        // With hold_audio_ownership on, claim the session right away so the
+        // Digital Crown / stem swipe volume targets Linux even before any
+        // local playback starts.
+        media_controller
+            .lock()
+            .await
+            .handle_connected(&aacp_manager)
+            .await;
+
         // OwnsConnection reports feed the handoff FSM. On loss it pauses
         // MPRIS but leaves the bluez profile in A2DP: switching the profile
         // to "off" here forced wireplumber to renegotiate when audio came

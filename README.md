@@ -173,6 +173,13 @@ battery_alert_command = ["notify-send", "AirPods", "{}"]
 
 # Optional: run after the audio sink switches if you hit quality issues
 # restart_audio_server = ["systemctl", "--user", "restart", "wireplumber"]
+
+# Claim AirPods audio ownership on connect and re-claim it whenever a peer
+# Apple device goes silent. Ownership decides where the AirPods Max Digital
+# Crown (and stem volume swipe) steers volume: with this off and an iPhone
+# connected at the same time, the crown adjusts the iPhone, not Linux
+# (default: false; a connected iPhone may lose audio focus)
+hold_audio_ownership = true
 ```
 
 Set any command to `[]` to disable that integration. `restart_audio_server` defaults to `None` (disabled).
